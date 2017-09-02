@@ -1,0 +1,298 @@
+#include "task_main.h"
+#include "task_gui.h"
+#include "task_sd.h"
+
+#include "stdio.h"
+#include "stdlib.h"
+#include "ucos_ii.h"
+#include "pincfg.h"
+#include "delay.h"
+#include "tft_api.h"
+#include "indkey.h"
+#include "timer.h"
+#include "EXTI.H"
+#include "adc.h"
+#include "usart1.h"
+
+/*-----------------------------------------
+		    	声明变量
+------------------------------------------*/
+extern OS_EVENT *LCD_Buffer_MUTEX;
+extern OS_EVENT *USART_Buffer_MUTEX;
+extern OS_EVENT *SDtoRAM_Buffer_MUTEX;
+
+extern uint8_t LCD_Buffer[BUFFER_SIZE];
+extern uint8_t USART_Buffer[32];
+extern volatile uint16_t ADCConvertedValue[SAMPDEPTH];
+extern volatile uint16_t SDtoRAM_Buffer[SAMPDEPTH];	  //从SD卡读出的缓冲区
+extern uint8_t USART_FIFO;
+
+uint8_t Decoding_Buffer[10];
+WaveType WaveInfo;
+WaveMode WaveCtrl;
+/*-----------------------------------------
+ 函数说明:初始化波形配置参数
+------------------------------------------*/
+void WaveMode_Init(WaveMode* WaveCtrl)
+{
+    WaveCtrl->UpdatTrue = 0;
+    WaveCtrl->TriggerMode = Trigger_Rising;
+}
+/*-----------------------------------------
+ 函数说明:任务堆栈检查 
+------------------------------------------*/
+void TaskStackChack(void)
+{
+	OS_STK_DATA data;
+	uint8_t i,err;
+	for(i=0;i<5;i++)	  //当前工程有5个任务
+	{
+	 	OSTaskStkChk(11+i,&data);
+		LCD_Write_String(30,20,"Prio Total Free Used ",Green,Black);
+
+		OSMutexPend(LCD_Buffer_MUTEX,0,&err);	   //占用信号量		
+		sprintf(LCD_Buffer," %2d  %2d  %2d  %2d ",  11+i,
+													 data.OSFree+data.OSUsed,
+													 data.OSFree,
+													 data.OSUsed);
+		LCD_Write_String(30,40+20*i,LCD_Buffer,Green,Black);		
+		OSMutexPost(LCD_Buffer_MUTEX);			   //释放信号量
+	}
+}
+/*-----------------------------------------
+ 函数说明:获取频率周期值,通过调用oscilloscope.c
+          中的GetSquareWavePriod()得到
+		  注意本函数多次操作共享资源,使用了
+		  互斥信号量作为安全保证
+------------------------------------------*/
+void GetFrequence(void)
+{	
+	uint8_t err;
+	//完成电压参数显示
+	OSMutexPend(LCD_Buffer_MUTEX,0,&err);	   //占用信号量		
+	sprintf(LCD_Buffer,"Vmax:%1.2fV  Vmin:%1.2fV  Vpp:%2.2fV  Vrms:%2.2fV",WaveInfo.Vmax,
+												       			   		   WaveInfo.Vmin,
+												       			   		   WaveInfo.Vpp,
+																   		   WaveInfo.Vrms);
+	LCD_Write_String(10,205,LCD_Buffer,Green,Black);	
+	OSMutexPost(LCD_Buffer_MUTEX);			   //释放信号量
+	//完成周期测量和频率计算		
+    WaveInfo.Priod = GetSquareWavePriod();
+	WaveInfo.Frequency = 1000000 / WaveInfo.Priod;
+
+	OSMutexPend(LCD_Buffer_MUTEX,0,&err);	   //占用信号量
+	sprintf(LCD_Buffer,"T:%5duS   F:%5dHz ",WaveInfo.Priod,WaveInfo.Frequency);
+	LCD_Write_String(10,225,LCD_Buffer,Green,Black);
+	OSMutexPost(LCD_Buffer_MUTEX);			   //释放信号量
+	
+	//完成高电平测量和占空比计算
+	WaveInfo.HighWidth = WaveInfo.Priod - WaveInfo.LowWidth;
+	WaveInfo.DutyCycle = WaveInfo.HighWidth*100 / WaveInfo.Priod;
+
+	OSMutexPend(LCD_Buffer_MUTEX,0,&err);	   //占用信号量
+	sprintf(LCD_Buffer,"H:%5duS   L:%5duS    Duty:%2d ",WaveInfo.HighWidth,
+												        WaveInfo.LowWidth,
+												        WaveInfo.DutyCycle);
+	LCD_Write_String(10,245,LCD_Buffer,Green,Black);
+	OSMutexPost(LCD_Buffer_MUTEX);			   //释放信号量
+
+	OSMutexPend(LCD_Buffer_MUTEX,0,&err);	   //占用信号量
+	sprintf(LCD_Buffer,"AMP:%.2f",WaveCtrl.AmpDiv);												      
+	LCD_Write_String(200,225,LCD_Buffer,Green,Black);
+	OSMutexPost(LCD_Buffer_MUTEX);			   //释放信号量		
+}
+/*-----------------------------------------
+ 函数说明:获取AD FIFO中的原始值且显示
+------------------------------------------*/
+void GetWaveADCValue(void)
+{
+	if(WaveCtrl.UpdatTrue == 1 && WaveCtrl.Stop == 0)
+	{
+		WaveCtrl.UpdatTrue = 0;
+		ShowRealTimeWave();
+		SD_SaveWaveADValue();		//存储波形
+		WaveCtrl.SavedSD = 0;			
+		WaveMode_Init(&WaveCtrl);	//初始化波形参数
+		EXTI->IMR |= EXTI_Line1;	//开启AD下一轮转换	
+	}
+}
+
+/*-----------------------------------------
+ 函数说明:在LCD上显示存储的波形
+------------------------------------------*/
+void ShowSavedWave(void)
+{
+	uint16_t i;
+	SD_LoadWaveADValue();		  //从SD卡载入波形
+	WaveCtrl.ReadSD = 0;
+	WaveInfo.Vmax = 2047.0;
+	WaveInfo.Vmin = 2047.0;
+	LCD_Clear_Select(2,2,478,200,Black);
+	Draw_Gird();	
+	for(i=3; i<SAMPDEPTH-2; i++)
+	{	
+		Draw_Line(i-1,(uint16_t)((ADCConvertedValue[i-1]*200/4096)),
+				  i,  (uint16_t)((ADCConvertedValue[i]*200/4096)),Blue2);
+		Draw_Line(i-1,(uint16_t)((ADCConvertedValue[i-1]*200/4096)+1),
+				  i,  (uint16_t)((ADCConvertedValue[i]*200/4096)+1),Blue2);		
+		if(WaveInfo.Vmax < (float)ADCConvertedValue[i])
+		{
+			WaveInfo.Vmax =(float)ADCConvertedValue[i];	
+		}
+		if(WaveInfo.Vmin > (float)ADCConvertedValue[i])
+		{
+		 	WaveInfo.Vmin =(float)ADCConvertedValue[i];	
+		}
+	}	 
+	
+	if(JDQ_ACDC == 1)   //AC耦合
+	{
+	 	WaveInfo.Vmax -= 2047.0;
+		WaveInfo.Vmin -= 2047.0;	
+	}
+	WaveInfo.Vmax = (float)(WaveInfo.Vmax/4095 * 3.3 * WaveCtrl.AmpDiv);
+	WaveInfo.Vmin = (float)(WaveInfo.Vmin/4095 * 3.3 * WaveCtrl.AmpDiv);
+	WaveInfo.Vpp = WaveInfo.Vmax - WaveInfo.Vmin;	
+	WaveInfo.Vrms = WaveInfo.Vpp*1000 / 2828;	
+}
+
+/*-----------------------------------------
+ 函数说明:在LCD上显示实时波形
+------------------------------------------*/
+void ShowRealTimeWave(void)
+{
+	uint16_t i;
+	WaveInfo.Vmax = 2047.0;
+	WaveInfo.Vmin = 2047.0;
+	LCD_Clear_Select(2,2,478,200,Black);
+	Draw_Gird();	
+	for(i=3; i<SAMPDEPTH-2; i++)
+	{	
+		Draw_Line(i-1,(uint16_t)((ADCConvertedValue[i-1]*200/4096)),
+				  i,  (uint16_t)((ADCConvertedValue[i]*200/4096)),Yellow);
+		Draw_Line(i-1,(uint16_t)((ADCConvertedValue[i-1]*200/4096)+1),
+				  i,  (uint16_t)((ADCConvertedValue[i]*200/4096)+1),Yellow);		
+		if(WaveInfo.Vmax < (float)ADCConvertedValue[i])
+		{
+			WaveInfo.Vmax =(float)ADCConvertedValue[i];	
+		}
+		if(WaveInfo.Vmin > (float)ADCConvertedValue[i])
+		{
+		 	WaveInfo.Vmin =(float)ADCConvertedValue[i];	
+		}
+	}
+	if(JDQ_ACDC == 1)   //AC耦合
+	{
+	 	WaveInfo.Vmax -= 2047.0;
+		WaveInfo.Vmin -= 2047.0;	
+	}
+	WaveInfo.Vmax = (float)(WaveInfo.Vmax/4095 * 3.3 * WaveCtrl.AmpDiv);
+	WaveInfo.Vmin = (float)(WaveInfo.Vmin/4095 * 3.3 * WaveCtrl.AmpDiv);
+	WaveInfo.Vpp = WaveInfo.Vmax - WaveInfo.Vmin;	
+	WaveInfo.Vrms = WaveInfo.Vpp*1000 / 2828;	
+}
+
+/*-----------------------------------------
+ 函数说明:串口发送波形参数到上位机
+------------------------------------------*/
+void SendDataToPC(void)
+{
+	OS_CPU_SR  cpu_sr = 0u;
+	INT8U err;
+	OSMutexPend(LCD_Buffer_MUTEX,0,&err);	   //占用信号量
+	/* Start(S)-(data)-A-(data)-B-(data)-C-(data)-D-(data)-E-Z(End) */
+	sprintf(LCD_Buffer," %dA%dB%dC%dD%dE%.2fF%.2fG%.2fH%.2fI" 
+										  ,WaveInfo.Frequency
+										  ,WaveInfo.Priod
+									      ,WaveInfo.HighWidth
+									      ,WaveInfo.LowWidth
+										  ,WaveInfo.DutyCycle
+										  ,WaveInfo.Vmax
+										  ,WaveInfo.Vmin
+										  ,WaveInfo.Vpp
+										  ,WaveInfo.Vrms);
+	//数据发送时不希望被打断
+	OS_ENTER_CRITICAL();
+	printf("%s\r\n",LCD_Buffer);
+	OSMutexPost(LCD_Buffer_MUTEX);			   //释放信号量
+
+	OSMutexPend(USART_Buffer_MUTEX,0,&err);	   //占用信号量
+	PCtoMCU_Decoding(USART_Buffer,Decoding_Buffer);
+	OSMutexPost(USART_Buffer_MUTEX);		   //释放信号量
+	OS_EXIT_CRITICAL();			
+}
+/*-----------------------------------------
+ 函数说明:对上位机发来的数据进行解码,解码
+          依据请参照协议表
+ 函数参数:存放DMA数据流的缓冲区Revdata[]
+ 		  解码后的缓冲区data[]
+------------------------------------------*/
+void PCtoMCU_Decoding(uint8_t Revdata[],uint8_t data[])
+{
+	uint8_t j,k,m;
+	uint32_t pram;
+	if(USART_FIFO == 1)
+	{	
+		if(Revdata[0] == '(')		 //帧头
+		{	
+			printf("OK:%sEnd\r\n",Revdata);
+		 	if(Revdata[1] == 'C') 	 //CMD
+			{
+				data[0] = 0x43;
+				printf("\r\nCMD\r\n");
+			}	   		 
+			if(Revdata[1] == 'D') 	 //DATA
+			{
+				data[0] = 0x44;
+				printf("\r\nDATA\r\n");
+			}
+			j = 2;
+			k = 1;
+			while(Revdata[j] != 'a' && Revdata[j]>='0' && Revdata[j]<='9')	//没遇到a之前
+			{
+				data[k] = Revdata[j];
+				k++;
+			 	j++;
+				if(k>10) break;		//防止进入死循环
+			}
+			pram = atoi(&data[1]);	//从数据位开始检索
+			printf("FL1:%s JM1:%d\r\n",data,pram);			
+			for(m=0; m<10; m++)    	//data长度为10
+					data[m] = ' ';	//清空data缓冲用0x20填满
+			k = 0;
+			j++;
+			while(Revdata[j] != 'b' && Revdata[j]>='0' && Revdata[j]<='9')
+			{
+				data[k] = Revdata[j];
+				k++;
+			 	j++;
+				if(k>10) break;		//防止进入死循环
+			}
+			pram = atoi(data);
+			printf("FL2:%s JM2:%d\r\n",data,pram);
+			for(m=0; m<10; m++)    	//data长度为10
+					data[m] = ' ';	//清空data缓冲用0x20填满
+			j++;
+			if(Revdata[j] != ')')	//帧尾是否正确
+			{
+			 	printf("Error!\r\n");
+			}	
+		}
+		else
+		{
+			printf("ZTF\r\n%s\r\n",Revdata);				
+		}
+		USART_FIFO = 0;
+		for(m=0; m<USART_BUFFER_SIZE; m++)	 //缓冲区清空
+			USART_Buffer[m] = 0;
+		DMA_Cmd(DMA1_Channel5,ENABLE);		 //打开DMA
+	}	 	
+}
+/*-----------------------------------------
+ 函数说明:对发往上位机的数据进行编码
+ 函数参数:
+------------------------------------------*/
+void MCUtoPC_Coding(uint8_t data[])
+{
+
+}

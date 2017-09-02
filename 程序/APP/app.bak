@@ -1,0 +1,183 @@
+/*------------------------------------------------------------------------------------
+        		   	  STM32+UCOS+UCGUI示波器
+	   
+	   					    任务列表
+	   +---------------------+-------------+-----------+
+	   |      任务名称       | 任务优先级  |  任务堆栈 |
+	   +---------------------+-------------+-----------+
+	   |   TASK_TOUCHSCREEN	 |     11      |    512    |
+	   +---------------------+-------------+-----------+
+	   |   TASK_MAIN         |     12      |   1024    |
+	   +---------------------+-------------+-----------+
+	   |   TASK_RTC   	     |     13      |    512    |
+	   +---------------------+-------------+-----------+
+	   |   TASK_SD	         |     14      |    512    |
+	   +---------------------+-------------+-----------+
+	   |   TASK_GUI	 		 |     15      |   2048    |
+	   +---------------------+-------------+-----------+
+	   |   TASK_START	     |     5       |    64     |
+	   +---------------------+-------------+-----------+
+	   
+
+ 时间: 2013年11月13日       BoX编写				
+-------------------------------------------------------------------------------------*/  
+#include "ucos_ii.h"   
+#include "stdio.h"
+#include "app.h"
+#include "pincfg.h"
+#include "delay.h"
+#include "tft_api.h"
+#include "oscilloscope.h"
+#include "indkey.h"
+#include "timer.h"
+#include "EXTI.H"
+
+#include "task_main.h"
+#include "task_gui.h"
+#include "task_rtc.h"
+#include "task_sd.h"
+#include "task_touchscreen.h"
+/*-----------------------------------------
+				声明任务栈
+ UCOSII的任务堆栈没有8字节对齐,在声明任务堆
+ 栈时,强制8字节对齐就可以了,系统默认是4字节
+ 对齐.否则sprintf时会出问题.
+------------------------------------------*/
+__align(8) OS_STK Task_TouchScreen_Stk[TASK_TOUCHSCREEN_STK_SIZE];
+__align(8) OS_STK Task_Main_Stk[TASK_MAIN_STK_SIZE];
+__align(8) OS_STK Task_RTC_Stk[TASK_RTC_STK_SIZE];
+__align(8) OS_STK Task_SD_Stk [TASK_SD_STK_SIZE];
+__align(8) OS_STK Task_GUI_Stk[TASK_GUI_STK_SIZE];
+/*-----------------------------------------
+		    	声明变量
+------------------------------------------*/
+extern uint16_t ADC1_DMA_Value;
+extern uint8_t  LCD_Buffer[BUFFER_SIZE];
+extern void BSP_Init(void);
+/*-----------------------------------------
+		    	开始任务
+------------------------------------------*/
+void Task_Start(void *pdata)
+{
+ 	 pdata = pdata;
+	 BSP_Init();		//完成片上外设的初始化
+	 OSStatInit();		//初始化统计任务
+	 
+	 while(1)
+	 {	 
+//	 	 ShowWelcomeScreen();
+//		 OSTimeDlyHMSM(0,0,3,0);
+	 	 /*触摸屏任务*/
+	  	 OSTaskCreateExt(Task_TouchScreen,
+                    	(void *)0,
+                    	&Task_TouchScreen_Stk[TASK_TOUCHSCREEN_STK_SIZE - 1],
+                    	TASK_TOUCHSCREEN_PRIO,
+                    	TASK_TOUCHSCREEN_PRIO,
+                    	&Task_TouchScreen_Stk[0],
+                    	TASK_TOUCHSCREEN_STK_SIZE,
+                    	(void *)0,
+                    	OS_TASK_OPT_STK_CHK | OS_TASK_OPT_STK_CLR);
+		/*主任务*/
+		OSTaskCreateExt(Task_Main,
+	                    (void *)0,
+	                    &Task_Main_Stk[TASK_MAIN_STK_SIZE - 1],
+	                    TASK_MAIN_PRIO,
+	                    TASK_MAIN_PRIO,
+	                    &Task_Main_Stk[0],
+	                    TASK_MAIN_STK_SIZE,
+	                    (void *)0,
+	                    OS_TASK_OPT_STK_CHK | OS_TASK_OPT_STK_CLR);
+        /*实时时钟任务*/
+        OSTaskCreateExt(Task_RTC,
+	                    (void *)0,
+	                    &Task_RTC_Stk[TASK_RTC_STK_SIZE - 1],
+	                    TASK_RTC_PRIO,
+	                    TASK_RTC_PRIO,
+	                    &Task_RTC_Stk[0],
+	                    TASK_RTC_STK_SIZE,
+	                    (void *)0,
+	                    OS_TASK_OPT_STK_CHK | OS_TASK_OPT_STK_CLR);
+        /*SD卡任务*/
+        OSTaskCreateExt(Task_SD,
+	                    (void *)0,
+	                    &Task_SD_Stk[TASK_SD_STK_SIZE - 1],
+	                    TASK_SD_PRIO,
+	                    TASK_SD_PRIO,
+	                    &Task_SD_Stk[0],
+	                    TASK_SD_STK_SIZE,
+	                    (void *)0,
+	                    OS_TASK_OPT_STK_CHK | OS_TASK_OPT_STK_CLR);
+		/*GUI任务*/
+		OSTaskCreateExt(Task_GUI,
+                    	(void *)0,
+	                    &Task_GUI_Stk[TASK_GUI_STK_SIZE - 1],
+	                    TASK_GUI_PRIO,
+	                    TASK_GUI_PRIO,
+	                    &Task_GUI_Stk[0],
+	                    TASK_GUI_STK_SIZE,
+	                    (void *)0,
+	                    OS_TASK_OPT_STK_CHK | OS_TASK_OPT_STK_CLR);
+  	     
+        OSTaskSuspend(OS_PRIO_SELF);   //挂起Task_Start任务
+	 }
+}
+/*-----------------------------------------
+		    	触摸屏任务
+------------------------------------------*/	 
+void Task_TouchScreen(void *pdata)
+{
+	pdata = pdata;
+	while(1)
+	{	
+		OSTimeDly(1000);
+	}
+}
+/*-----------------------------------------
+		    	Real Time Clock任务
+------------------------------------------*/
+void Task_RTC(void *pdata)
+{
+	pdata = pdata;	
+	while(1)
+	{	
+		GetFrequence();
+		SendDataToPC();
+	 	OSTimeDlyHMSM(0,0,0,700);
+	} 	
+}
+/*-----------------------------------------
+		     	主任务 
+------------------------------------------*/
+void Task_Main(void *pdata)
+{	
+	pdata = pdata;
+	while(1)
+	{
+//		TaskStackChack();
+		GetWaveADCValue();
+		OSTimeDlyHMSM(0,0,0,100);
+	}	
+}
+/*-----------------------------------------
+		    	SD任务 
+------------------------------------------*/
+void Task_SD(void *pdata)
+{
+	pdata = pdata;
+	while(1)
+	{
+	 	OSTimeDlyHMSM(0,0,1,10);
+	}
+}
+/*-----------------------------------------
+		    	GUI任务 
+------------------------------------------*/ 
+void Task_GUI(void *pdata)
+{
+	pdata = pdata;
+	while(1)
+	{
+//		AutoGainScan();	
+		OSTimeDlyHMSM(0,0,10,10);
+	}
+}

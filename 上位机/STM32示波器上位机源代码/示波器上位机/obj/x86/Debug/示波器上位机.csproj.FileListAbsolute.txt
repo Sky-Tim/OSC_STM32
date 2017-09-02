@@ -1,0 +1,14 @@
+D:\电子\C#程序\STM32示波器上位机\示波器上位机\示波器上位机\bin\Debug\示波器上位机.exe
+D:\电子\C#程序\STM32示波器上位机\示波器上位机\示波器上位机\bin\Debug\示波器上位机.pdb
+D:\电子\C#程序\STM32示波器上位机\示波器上位机\示波器上位机\obj\x86\Debug\ResolveAssemblyReference.cache
+D:\电子\C#程序\STM32示波器上位机\示波器上位机\示波器上位机\obj\x86\Debug\示波器上位机.Form1.resources
+D:\电子\C#程序\STM32示波器上位机\示波器上位机\示波器上位机\obj\x86\Debug\示波器上位机.Properties.Resources.resources
+D:\电子\C#程序\STM32示波器上位机\示波器上位机\示波器上位机\obj\x86\Debug\示波器上位机.exe
+D:\电子\C#程序\STM32示波器上位机\示波器上位机\示波器上位机\obj\x86\Debug\示波器上位机.pdb
+D:\电子\C#程序\STM32示波器上位机\示波器上位机\obj\x86\Debug\示波器上位机.exe
+D:\电子\C#程序\STM32示波器上位机\示波器上位机\obj\x86\Debug\示波器上位机.pdb
+D:\电子\C#程序\STM32示波器上位机\示波器上位机\bin\Debug\示波器上位机.exe
+D:\电子\C#程序\STM32示波器上位机\示波器上位机\bin\Debug\示波器上位机.pdb
+D:\电子\C#程序\STM32示波器上位机\示波器上位机\obj\x86\Debug\ResolveAssemblyReference.cache
+D:\电子\C#程序\STM32示波器上位机\示波器上位机\obj\x86\Debug\示波器上位机.Form1.resources
+D:\电子\C#程序\STM32示波器上位机\示波器上位机\obj\x86\Debug\示波器上位机.Properties.Resources.resources

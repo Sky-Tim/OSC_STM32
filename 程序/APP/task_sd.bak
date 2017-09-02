@@ -1,0 +1,77 @@
+#include "sdcard.h"
+#include "task_main.h"
+#include "task_gui.h"
+#include "task_sd.h"
+#include "stdio.h"
+#include "ucos_ii.h"
+#include "pincfg.h"
+#include "delay.h"
+#include "tft_api.h"
+#include "indkey.h"
+#include "timer.h"
+#include "EXTI.H"
+#include "adc.h"
+#include "usart1.h"
+/*-----------------------------------------
+		    	声明变量
+------------------------------------------*/
+extern volatile uint16_t ADCConvertedValue[SAMPDEPTH];
+extern WaveType WaveInfo;
+extern WaveMode WaveCtrl;
+
+volatile uint8_t SDtoRAM_Buffer[10];	  //从SD卡读出的缓冲区
+/*-----------------------------------------
+ 函数说明:把波形存储到SD卡
+-----------------------------------------*/
+void SD_SaveWaveADValue(void)
+{
+	uint32_t i,j;
+	uint8_t adHigh8bit;
+	uint8_t adLow8bit;
+//	OS_ENTER_CRITICAL();
+	if(WaveCtrl.SavedSD == 0)
+	{
+		for(i=0,j=0; i<SAMPDEPTH*2-2; i+=2,j++)	//x2因为数组是8位的,而AD是16位的,-2防止越界
+		{
+			adHigh8bit = (uint8_t)(ADCConvertedValue[j]>>8 & 0x00FF);
+			adLow8bit  = (uint8_t)(ADCConvertedValue[j] & 0x00FF);
+	 		SDtoRAM_Buffer[i]   = adHigh8bit;
+			SDtoRAM_Buffer[i+1] = adLow8bit;
+		}
+		SD_MultiWrite(SDtoRAM_Buffer,0x00,2);	//2个Block是1K字节足够了
+		WaveCtrl.SavedSD = 1;					//通知完成一次波形存储
+	}
+	else
+	{
+	 	printf("\r\n SD还未采集新数据 ");
+	}
+//	OS_EXIT_CRITICAL();
+}
+
+/*-----------------------------------------
+ 函数说明:从SD卡载入波形
+-----------------------------------------*/
+void SD_LoadWaveADValue(void)
+{
+	uint32_t i,j;
+	uint8_t  adHigh8bit;
+	uint8_t  adLow8bit;
+	uint16_t LoadADValue = 0x0000;
+//	OS_ENTER_CRITICAL();
+	if(WaveCtrl.ReadSD == 0)
+	{
+		SD_MultiRead(SDtoRAM_Buffer,0x00,2);
+		for(i=0,j=0; i<SAMPDEPTH*2-2; i+=2,j++)
+		{
+			SDtoRAM_Buffer[i]   = adHigh8bit;
+			SDtoRAM_Buffer[i+1] = adLow8bit;
+			ADCConvertedValue[j] = adHigh8bit<<8 + adLow8bit; 		
+		}
+		WaveCtrl.ReadSD = 1;			//通知完成一次波形读取
+	}
+	else
+	{
+		printf("\r\n 已经读取但是还没使用 ");
+	}
+//	OS_EXIT_CRITICAL();	
+}
